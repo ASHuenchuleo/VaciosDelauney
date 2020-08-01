@@ -10,14 +10,18 @@
 #include "../shared/consts.h"
 #include "../shared/adjgraph.h"
 #include "../shared/timestamp.h"
+#include "../shared/vacios.h"
+
 #include "ocl.h"
 
 #include <CL/cl.h>
 #include <malloc.h>
 #include <math.h>
 #include <string.h>
+#include <sys/time.h>
 
-#define KERNELS_FILE_PATH "kernels.cl.c"
+
+#define KERNELS_FILE_PATH "paralelo2/kernels.cl.c"
 
 const char *getErrorString(cl_int error)
 {
@@ -111,18 +115,20 @@ void mergeInt(int* arr, int* crit, int l, int m, int r)
     int i, j, k; 
     int n1 = m - l + 1; 
     int n2 = r - m; 
-  
     /* create temp arrays */
-    int L[n1], R[n2], L_crit[n1], R_crit[n2]; 
-  
+    int *L = malloc(n1 * sizeof(int));
+    int *R = malloc(n2 * sizeof(int));
+    int *L_crit = malloc(n1 * sizeof(int));
+    int *R_crit = malloc(n2 * sizeof(int));
     /* Copy data to temp arrays L[] and R[] */
     for (i = 0; i < n1; i++) 
         L[i] = arr[l + i]; 
     for (j = 0; j < n2; j++) 
         R[j] = arr[m + 1 + j]; 
 
-    for (i = 0; i < n1; i++) 
-        L_crit[i] = crit[l + i]; 
+    for (i = 0; i < n1; i++){
+        L_crit[i] = crit[l + i];
+    }
     for (j = 0; j < n2; j++) 
         R_crit[j] = crit[m + 1 + j]; 
   
@@ -160,7 +166,11 @@ void mergeInt(int* arr, int* crit, int l, int m, int r)
         crit[k] = R_crit[j];
         j++; 
         k++; 
-    } 
+    }
+    free(L);
+    free(R);
+    free(L_crit);
+    free(R_crit);
 } 
   
 /* l is for left index and r is right index of the 
@@ -177,7 +187,7 @@ void mergeSortInt(int* arr, int* crit, int l, int r)
     } 
 } 
 
-int main(int argc, char **argv)
+int void_par(int argc, char **argv)
 {
 
 	int pnumber;
@@ -234,23 +244,20 @@ int main(int argc, char **argv)
 	int (*new_aligned_mem_size)(int);
 	
 	read_arguments(argc, argv, &ppath, &threshold, &cpath_prefix);
-	
-	print_timestamp("Ejecutando qdelaunay...\n", t);
+
 	read_qdelaunay_data(ppath, &r, &p, &adj, &area, &pnumber, &tnumber, align_settings);
 	
-	printf("* %d triángulos\n", tnumber);
-	printf("* %d puntos\n", pnumber);
-	print_timestamp("Preparando para procesamiento paralelo...\n", t);
+	struct timeval tstart;
+	struct timeval tend;
+	gettimeofday(&tstart, NULL);
 
 	/* configuracion de work groups */
 	/* Trabajar en una dimensión. */
-	size_t localSize[1] = {pow(2, 7)};
+	size_t localSize[1] = {pow(2, 9)};
 	size_t numLocalGroups = ceil(((float)tnumber)/localSize[0]);
 
 	size_t global_work_size[1] = {localSize[0] * numLocalGroups}; /* <--- POR CHEQUEAR SI SUPERA MAXIMO */
 
-	printf("%ld work items per workgroup, %ld workgroups, %ld total work items\n", localSize[0], numLocalGroups, global_work_size[0]);
-	
 	/* Reservar memoria alineada. */
 	new_aligned_mem_size = align_settings[1];
 
@@ -377,22 +384,26 @@ int main(int argc, char **argv)
 	ret = clGetDeviceInfo(device_id, CL_DEVICE_NAME, sizeof(dev_name), dev_name, NULL);
 	
 	  /*	printf("* Trabajando con: %s\n, número de plataformas %d %d", dev_name, ret_num_devices, ret_num_devices);*/
-	  printf("* Trabajando con: %s\n", dev_name);
+
 
 	  cl_uint native_double_width;    
 	  clGetDeviceInfo(device_id, CL_DEVICE_NATIVE_VECTOR_WIDTH_DOUBLE, sizeof(cl_uint), &native_double_width, NULL);
 
-	  if(native_double_width == 0){
-	    printf("No double precision support.\n");
-	  }else{
-	    printf("Double precision support.\n");
-	  }
+
 
 	cl_ulong localMemSize = 0;
 	clGetDeviceInfo(device_id, CL_DEVICE_LOCAL_MEM_SIZE, 
 	    sizeof(cl_ulong), &localMemSize, NULL);
-	printf("Local memory size: %li integers\n", localMemSize/sizeof(int));
+	/*
+	printf("* Trabajando con: %s\n", dev_name);
 
+	if(native_double_width == 0){
+	  printf("No double precision support.\n");
+	}else{
+	  printf("Double precision support.\n");
+	}
+	printf("Local memory size: %li integers\n", localMemSize/sizeof(int));
+	*/
 
 	/* Crear contexto de OpenCL. */
 	context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &ret);
@@ -565,40 +576,26 @@ int main(int argc, char **argv)
 	clFinish(command_queue);
 
 
-
-	
-
-	print_timestamp("Ejecutando primera fase de kerneles...\n", t);
-
-	
-
 	/* Encolar kerneles en cola de comandos. */
 	ret = clEnqueueNDRangeKernel(command_queue, init_values_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("init_values_kernel", ret);
 	
 	ret = clEnqueueNDRangeKernel(command_queue, mark_max_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("mark_max_kernel", ret);
 	
 	ret = clEnqueueNDRangeKernel(command_queue, create_tree_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("create_tree_kernel", ret);
 		
 	int step_count;
 	/* Calcular el numero de pasos para llegar a la raiz */
 	int jumping_max_steps = ceil(log(tnumber)/log(2.));
 	for(step_count = 0; step_count < jumping_max_steps; step_count++){
 		ret = clEnqueueNDRangeKernel(command_queue, find_succesor_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-		/*printf("find_succesor_kernel: %s\n", getErrorString(ret));*/
 
 		ret = clEnqueueNDRangeKernel(command_queue, set_succesor_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-		/*printf("set_succesor_kernel: %s\n", getErrorString(ret));*/
 	}
 
 	ret = clEnqueueNDRangeKernel(command_queue, init_parent_copy_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	retDebug("init_parent_copy_kernel", ret);
 	
 	
 	
@@ -662,8 +659,6 @@ int main(int argc, char **argv)
 	#endif
 	/*** DEBUG ***/
 
-	print_timestamp("Sorting by parent sequentially...\n", t);
-
 	/* Ordenar */
 	map_linked_copy = clEnqueueMapBuffer(command_queue, memobj_linked_copy, CL_TRUE, CL_MAP_WRITE,
 																	0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
@@ -673,27 +668,19 @@ int main(int argc, char **argv)
 
 
 	mergeSortInt(linked_copy, parent_copy, 0, tnumber - 1);
-
 	clEnqueueUnmapMemObject(command_queue, memobj_linked_copy, map_linked_copy, 0, NULL, NULL);
 	clEnqueueUnmapMemObject(command_queue, memobj_parent_copy, map_parent_copy, 0, NULL, NULL);
 	clFinish(command_queue);
 
-	print_timestamp("Ejecutando última fase de kerneles...\n", t);
 
 	ret = clEnqueueNDRangeKernel(command_queue, init_linked_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	retDebug("init_linked_kernel", ret);
 	
 
 
 	ret = clEnqueueNDRangeKernel(command_queue, init_linked_copy_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("init_linked_copy_kernel", ret);
-	
 
 	ret = clEnqueueNDRangeKernel(command_queue, mark_end_nodes_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	retDebug("mark_end_nodes_kernel", ret);
 	
 
 	for(step_count = 0; step_count < jumping_max_steps; step_count++){
@@ -702,15 +689,9 @@ int main(int argc, char **argv)
 	}
 	ret = clEnqueueNDRangeKernel(command_queue, communicate_data_to_root_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("communicate_data_to_root_kernel", ret);
-	
 
 	ret = clEnqueueNDRangeKernel(command_queue, communicate_types_areas_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("communicate_types_areas_kernel", ret);
-	
-
-
 
 	cl_int class_to_count;
 
@@ -722,13 +703,9 @@ int main(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_nonzone_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("count_class_kernel", ret);
-	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_nonzones_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	retDebug("count_class_kernel", ret);
 	
 	class_to_count = INNER_VOID;
 	ret = clSetKernelArg(count_class_kernel, 3, sizeof(cl_int), &class_to_count);
@@ -737,13 +714,9 @@ int main(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_ivoid_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("count_class_kernel", ret);
-	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_ivoids_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	retDebug("count_class_kernel", ret);
 	
 	class_to_count = BORDER_VOID;
 	ret = clSetKernelArg(count_class_kernel, 3, sizeof(cl_int), &class_to_count);
@@ -752,13 +725,9 @@ int main(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_bvoid_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("count_class_kernel", ret);
-	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_bvoids_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	retDebug("count_class_kernel", ret);
 	
 	class_to_count = WALL;
 	ret = clSetKernelArg(count_class_kernel, 3, sizeof(cl_int), &class_to_count);
@@ -767,13 +736,9 @@ int main(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_wall_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	retDebug("count_class_kernel", ret);
-	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_walls_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	retDebug("count_class_kernel", ret);
 	
 
 
@@ -885,7 +850,6 @@ int main(int argc, char **argv)
 	num_wall_triangs = 0;
 
 	int i;
-	print_timestamp("Analizando zonas..\n", t);
 	for(i = 0; i < numLocalGroups; i++)
 	{	
 		num_nonzones += num_nonzones_prods_wg[i];
@@ -898,62 +862,31 @@ int main(int argc, char **argv)
 		num_wall_triangs += num_wall_triangs_prods_wg[i];
 		num_nonzone_triangs += num_nonzone_triangs_prods_wg[i];
 	}
+
+
+	int time = 0;
+	gettimeofday(&tend, NULL);
+	time += ((tend.tv_sec - tstart.tv_sec) * 1000000) + (tend.tv_usec - tstart.tv_usec);
+
 	/*
-	num_nonzones = 0;
-	num_ivoids = 0;
-	num_bvoids = 0;
-	num_walls = 0;
-	num_nonzone_triangs = 0;
-	num_ivoid_triangs = 0;
-	num_bvoid_triangs = 0;
-	num_wall_triangs = 0;
-
-	for(i = 0; i < tnumber; i++)
-	{
-			if(type[i] == INNER_VOID)
-			{
-				num_ivoids++;
-				num_ivoid_triangs = num_ivoid_triangs + 1;
-			}
-			else if(type[i] == BORDER_VOID)
-			{
-				num_bvoids++;
-				num_bvoid_triangs = num_bvoid_triangs + 1;
-			}
-			else if(type[i] == WALL)
-			{
-				num_walls++;
-				num_wall_triangs = num_wall_triangs + 1;
-			}
-			else
-			{
-				num_nonzones++;
-				num_nonzone_triangs = num_nonzone_triangs + 1;
-			}
-	}
-	*/
-
-	
 	printf("* Número de vacíos internos: %d (%d triángulos)\n", num_ivoids, num_ivoid_triangs);
 	printf("* Número de vacíos de borde: %d (%d triángulos)\n", num_bvoids, num_bvoid_triangs);
 	printf("* Número de murallas: %d (%d triángulos)\n", num_walls, num_wall_triangs);
 	printf("* Número de no-zonas: %d (%d triángulos)\n", num_nonzones, num_nonzone_triangs);
-	
-	print_timestamp("Escribiendo datos...\n", t);
-	
 	write_classification(cpath_prefix, jumping_next, type, area, tnumber, num_nonzone_triangs,
 												num_ivoid_triangs, num_bvoid_triangs, num_wall_triangs);
-	
+	*/
+
 	/* Liberar memoria. */
+	free(jumping_next);
+	free(type);
+	free(area);
 	free(r);
 	free(p);
 	free(adj);
-	free(area);
 	free(max);
 	free(is_seed);
-	free(jumping_next);
 	free(segment_role);
-	free(type);
 
 
 	free(segment_role_next);
@@ -978,8 +911,33 @@ int main(int argc, char **argv)
 	free(num_bvoid_triangs_prods_wg);
 	free(num_wall_triangs_prods_wg);
 
-	
-	print_timestamp("Fin.\n", t);
-	
-	return EXIT_SUCCESS;
+	clReleaseMemObject(memobj_r);
+	clReleaseMemObject(memobj_p);
+	clReleaseMemObject(memobj_adj);
+	clReleaseMemObject(memobj_max);
+	clReleaseMemObject(memobj_is_seed);
+	clReleaseMemObject(memobj_jumping_next);
+	clReleaseMemObject(memobj_area);
+	clReleaseMemObject(memobj_area_next);
+	clReleaseMemObject(memobj_segment_role);
+	clReleaseMemObject(memobj_segment_role_next);
+	clReleaseMemObject(memobj_touches_border);
+	clReleaseMemObject(memobj_touches_border_next);
+	clReleaseMemObject(memobj_type);
+	clReleaseMemObject(memobj_parent);
+	clReleaseMemObject(memobj_parent_copy);
+	clReleaseMemObject(memobj_linked);
+	clReleaseMemObject(memobj_linked_copy);
+	clReleaseMemObject(memobj_num_nonzones_prods_wg);
+	clReleaseMemObject(memobj_num_ivoids_prods_wg);
+	clReleaseMemObject(memobj_num_bvoids_prods_wg);
+	clReleaseMemObject(memobj_num_walls_prods_wg);
+	clReleaseMemObject(memobj_num_nonzone_triangs_prods_wg);
+	clReleaseMemObject(memobj_num_ivoid_triangs_prods_wg);
+	clReleaseMemObject(memobj_num_bvoid_triangs_prods_wg);
+	clReleaseMemObject(memobj_num_wall_triangs_prods_wg);
+
+
+
+	return time;
 }

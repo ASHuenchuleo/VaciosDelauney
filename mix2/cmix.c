@@ -204,7 +204,7 @@ int main(int argc, char **argv)
 
 	/* configuracion de work groups */
 	/* Trabajar en una dimensión. */
-	size_t localSize[1] = {tnumber};
+	size_t localSize[1] = {pow(2, 9)};
 	size_t numLocalGroups = ceil(((float)tnumber)/localSize[0]);
 
 	size_t global_work_size[1] = {localSize[0] * numLocalGroups}; /* <--- POR CHEQUEAR SI SUPERA MAXIMO */
@@ -237,23 +237,28 @@ int main(int argc, char **argv)
 	ret = clSetKernelArg(kernel0, 0, sizeof(cl_mem), (void *)&memobj_is_seed);
 	ret = clSetKernelArg(kernel0, 1, sizeof(cl_mem), (void *)&memobj_visited);
 	ret = clSetKernelArg(kernel0, 2, sizeof(cl_mem), (void *)&memobj_disconnect);
+	ret = clSetKernelArg(kernel0, 3, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel1, 0, sizeof(cl_mem), (void *)&memobj_r);
 	ret = clSetKernelArg(kernel1, 1, sizeof(cl_mem), (void *)&memobj_p);
 	ret = clSetKernelArg(kernel1, 2, sizeof(cl_mem), (void *)&memobj_max);
+	ret = clSetKernelArg(kernel1, 3, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel2, 0, sizeof(cl_mem), (void *)&memobj_p);
 	ret = clSetKernelArg(kernel2, 1, sizeof(cl_mem), (void *)&memobj_adj);
 	ret = clSetKernelArg(kernel2, 2, sizeof(cl_mem), (void *)&memobj_max);
 	ret = clSetKernelArg(kernel2, 3, sizeof(cl_mem), (void *)&memobj_disconnect);
 	ret = clSetKernelArg(kernel2, 4, sizeof(cl_mem), (void *)&memobj_is_seed);
+	ret = clSetKernelArg(kernel2, 5, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel3, 0, sizeof(cl_mem), (void *)&memobj_adj);
 	ret = clSetKernelArg(kernel3, 1, sizeof(cl_mem), (void *)&memobj_disconnect);
+	ret = clSetKernelArg(kernel3, 2, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel5, 0, sizeof(cl_mem), (void *)&memobj_type);
 	ret = clSetKernelArg(kernel5, 1, sizeof(cl_mem), (void *)&memobj_adj);
 	ret = clSetKernelArg(kernel5, 2, sizeof(cl_mem), (void *)&memobj_root_id);
+	ret = clSetKernelArg(kernel5, 3, sizeof(int), &tnumber);
 	clFinish(command_queue);
 
 	print_timestamp("Ejecutando primera fase de kerneles...\n", t);
@@ -455,6 +460,17 @@ int main(int argc, char **argv)
 	free(visited);
 	free(disconnect);
 	free(type);
+
+	clReleaseMemObject(memobj_r);
+	clReleaseMemObject(memobj_p);
+	clReleaseMemObject(memobj_adj);
+	clReleaseMemObject(memobj_max);
+	clReleaseMemObject(memobj_is_seed);
+	clReleaseMemObject(memobj_root_id);
+	clReleaseMemObject(memobj_area);
+	clReleaseMemObject(memobj_visited);
+	clReleaseMemObject(memobj_disconnect);
+	clReleaseMemObject(memobj_type);
 	
 	print_timestamp("Fin.\n", t);
 	

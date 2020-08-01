@@ -7,11 +7,13 @@
 #include "../shared/consts.h"
 #include "../shared/adjgraph.h"
 #include "../shared/timestamp.h"
+#include "../shared/vacios.h"
+
 #include "triang.h"
+#include <sys/time.h>
 
 
-
-int main(int argc, char **argv)
+int void_sec(int argc, char **argv)
 {
 	int pnumber;
 	int tnumber;
@@ -27,16 +29,18 @@ int main(int argc, char **argv)
 	start_time_measure(&t);
 	
 	read_arguments(argc, argv, &ppath, &threshold, &cpath_prefix);
-	
 
-	print_timestamp("Ejecutando qdelaunay...\n", t);
 	read_qdelaunay_data(ppath, &r, &p, &adj, &area, &pnumber, &tnumber, NULL);
 	
-  unsigned long e;
+	unsigned long e;
 
+	/*
 	printf("* %d triángulos\n", tnumber);
 	printf("* %d puntos\n", pnumber);
-	print_timestamp("Procesando...\n", t);
+	*/
+	struct timeval tstart;
+	struct timeval tend;
+	gettimeofday(&tstart, NULL);
 	
 	int *max;
 	int *is_seed;
@@ -65,12 +69,6 @@ int main(int argc, char **argv)
 	{
 		max[i] = max_edge_index(i, r, p);
 	}
-
-	for(e = 0; e < tnumber;  e++){
-	  printf("%d ", max[e]);
-	 }
-	 printf("\n");
-	 printf("\n");
 	
 	/* Etapa 2: Desconectar arcos asociados a aristas nomáx-nomáx. */
 	for(i = 0; i < tnumber; i++)
@@ -174,6 +172,9 @@ int main(int argc, char **argv)
 			num_regs++;
 		}
 	}
+
+
+	
 	
 	/* Etapa 5: Propagar a cada triángulo el área total de la región
 	 * (zona o no-zona) a la que pertenece y el tipo de ella. */
@@ -183,28 +184,32 @@ int main(int argc, char **argv)
 		type[i] = type[root_id[i]];
 	}
 	
+
+
+	int time = 0;
+	gettimeofday(&tend, NULL);
+	time += ((tend.tv_sec - tstart.tv_sec) * 1000000) + (tend.tv_usec - tstart.tv_usec);
+
+	/*
 	printf("* Número de vacíos internos: %d (%d triángulos)\n", num_ivoids, num_ivoid_triangs);
 	printf("* Número de vacíos de borde: %d (%d triángulos)\n", num_bvoids, num_bvoid_triangs);
 	printf("* Número de murallas: %d (%d triángulos)\n", num_walls, num_wall_triangs);
 	printf("* Número de no-zonas: %d (%d triángulos)\n", num_nonzones, num_nonzone_triangs);
-	
-	print_timestamp("Escribiendo datos...\n", t);
-	
 	write_classification(cpath_prefix, root_id, type, area, tnumber, num_nonzone_triangs,
 												num_ivoid_triangs, num_bvoid_triangs, num_wall_triangs);
-	
+	*/
+												
+	free(root_id);
+	free(type);
+	free(area);
 	free(r);
 	free(p);
 	free(adj);
-	free(area);
 	
 	free(max);
 	free(is_seed);
-	free(type);
 	free(visited);
-	free(root_id);
-	
-	print_timestamp("Fin.\n", t);
-	
-	return EXIT_SUCCESS;
+
+
+	return time;
 }

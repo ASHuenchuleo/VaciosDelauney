@@ -106,23 +106,26 @@ void retDebug(char* name, cl_int ret){
 	}
 }
 
+
 void mergeInt(int* arr, int* crit, int l, int m, int r) 
 { 
     int i, j, k; 
     int n1 = m - l + 1; 
     int n2 = r - m; 
-  
     /* create temp arrays */
-    int L[n1], R[n2], L_crit[n1], R_crit[n2]; 
-  
+    int *L = malloc(n1 * sizeof(int));
+    int *R = malloc(n2 * sizeof(int));
+    int *L_crit = malloc(n1 * sizeof(int));
+    int *R_crit = malloc(n2 * sizeof(int));
     /* Copy data to temp arrays L[] and R[] */
     for (i = 0; i < n1; i++) 
         L[i] = arr[l + i]; 
     for (j = 0; j < n2; j++) 
         R[j] = arr[m + 1 + j]; 
 
-    for (i = 0; i < n1; i++) 
-        L_crit[i] = crit[l + i]; 
+    for (i = 0; i < n1; i++){
+        L_crit[i] = crit[l + i];
+    }
     for (j = 0; j < n2; j++) 
         R_crit[j] = crit[m + 1 + j]; 
   
@@ -160,7 +163,11 @@ void mergeInt(int* arr, int* crit, int l, int m, int r)
         crit[k] = R_crit[j];
         j++; 
         k++; 
-    } 
+    }
+    free(L);
+    free(R);
+    free(L_crit);
+    free(R_crit);
 } 
   
 /* l is for left index and r is right index of the 
@@ -331,6 +338,8 @@ int main(int argc, char **argv)
 
 	cl_kernel init_parent_copy_kernel;
 
+	cl_kernel mergesort_kernel;
+
 	cl_kernel init_linked_kernel;
 	cl_kernel init_linked_copy_kernel;
 
@@ -446,6 +455,8 @@ int main(int argc, char **argv)
 	find_succesor_kernel = clCreateKernel(program, "find_succesor", &ret);
 	set_succesor_kernel = clCreateKernel(program, "set_succesor", &ret);
 
+	mergesort_kernel = clCreateKernel(program, "ParallelMerge_Local", &ret);
+
 	init_parent_copy_kernel = clCreateKernel(program, "init_parent_copy", &ret);
 
 	init_linked_kernel = clCreateKernel(program, "init_linked", &ret);
@@ -494,6 +505,14 @@ int main(int argc, char **argv)
 	ret = clSetKernelArg(set_succesor_kernel, 0, sizeof(cl_mem), (void *)&memobj_parent);
 	ret = clSetKernelArg(set_succesor_kernel, 1, sizeof(cl_mem), (void *)&memobj_jumping_next);
 	ret = clSetKernelArg(set_succesor_kernel, 2, sizeof(int), &tnumber);
+
+
+	ret = clSetKernelArg(mergesort_kernel, 0, sizeof(cl_mem), (void *)&memobj_parent);
+	ret = clSetKernelArg(mergesort_kernel, 1, sizeof(cl_mem), (void *)&memobj_linked_copy);
+	ret = clSetKernelArg(mergesort_kernel, 2, sizeof(int) * localSize[0], NULL);
+	ret = clSetKernelArg(mergesort_kernel, 3, sizeof(int) * localSize[0], NULL);
+	ret = clSetKernelArg(mergesort_kernel, 4, sizeof(int), &tnumber);
+
 
 
 
@@ -599,6 +618,10 @@ int main(int argc, char **argv)
 	ret = clEnqueueNDRangeKernel(command_queue, init_parent_copy_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
 	retDebug("init_parent_copy_kernel", ret);
+
+	ret = clEnqueueNDRangeKernel(command_queue, mergesort_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("mergesort_kernel", ret);
 	
 	
 	
@@ -665,6 +688,7 @@ int main(int argc, char **argv)
 	print_timestamp("Sorting by parent sequentially...\n", t);
 
 	/* Ordenar */
+	/*
 	map_linked_copy = clEnqueueMapBuffer(command_queue, memobj_linked_copy, CL_TRUE, CL_MAP_WRITE,
 																	0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
 
@@ -677,7 +701,7 @@ int main(int argc, char **argv)
 	clEnqueueUnmapMemObject(command_queue, memobj_linked_copy, map_linked_copy, 0, NULL, NULL);
 	clEnqueueUnmapMemObject(command_queue, memobj_parent_copy, map_parent_copy, 0, NULL, NULL);
 	clFinish(command_queue);
-
+	*/
 	print_timestamp("Ejecutando última fase de kerneles...\n", t);
 
 	ret = clEnqueueNDRangeKernel(command_queue, init_linked_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
@@ -978,6 +1002,31 @@ int main(int argc, char **argv)
 	free(num_bvoid_triangs_prods_wg);
 	free(num_wall_triangs_prods_wg);
 
+	clReleaseMemObject(memobj_r);
+	clReleaseMemObject(memobj_p);
+	clReleaseMemObject(memobj_adj);
+	clReleaseMemObject(memobj_max);
+	clReleaseMemObject(memobj_is_seed);
+	clReleaseMemObject(memobj_jumping_next);
+	clReleaseMemObject(memobj_area);
+	clReleaseMemObject(memobj_area_next);
+	clReleaseMemObject(memobj_segment_role);
+	clReleaseMemObject(memobj_segment_role_next);
+	clReleaseMemObject(memobj_touches_border);
+	clReleaseMemObject(memobj_touches_border_next);
+	clReleaseMemObject(memobj_type);
+	clReleaseMemObject(memobj_parent);
+	clReleaseMemObject(memobj_parent_copy);
+	clReleaseMemObject(memobj_linked);
+	clReleaseMemObject(memobj_linked_copy);
+	clReleaseMemObject(memobj_num_nonzones_prods_wg);
+	clReleaseMemObject(memobj_num_ivoids_prods_wg);
+	clReleaseMemObject(memobj_num_bvoids_prods_wg);
+	clReleaseMemObject(memobj_num_walls_prods_wg);
+	clReleaseMemObject(memobj_num_nonzone_triangs_prods_wg);
+	clReleaseMemObject(memobj_num_ivoid_triangs_prods_wg);
+	clReleaseMemObject(memobj_num_bvoid_triangs_prods_wg);
+	clReleaseMemObject(memobj_num_wall_triangs_prods_wg);
 	
 	print_timestamp("Fin.\n", t);
 	

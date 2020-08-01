@@ -2,6 +2,7 @@
 
 #define _POSIX_C_SOURCE 200112L /* Para popen, pclose y posix_memalign. */
 
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

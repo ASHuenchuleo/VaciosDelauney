@@ -10,93 +10,18 @@
 #include "../shared/consts.h"
 #include "../shared/adjgraph.h"
 #include "../shared/timestamp.h"
+#include "../shared/vacios.h"
+
 #include "ocl.h"
 
 #include <CL/cl.h>
 #include <malloc.h>
 #include <math.h>
 
-#define KERNELS_FILE_PATH "kernels.cl.c"
-
-const char *getErrorString(cl_int error)
-{
-	switch(error){
-	    /* run-time and JIT compiler errors */
-	    case 0: return "CL_SUCCESS";
-	    case -1: return "CL_DEVICE_NOT_FOUND";
-	    case -2: return "CL_DEVICE_NOT_AVAILABLE";
-	    case -3: return "CL_COMPILER_NOT_AVAILABLE";
-	    case -4: return "CL_MEM_OBJECT_ALLOCATION_FAILURE";
-	    case -5: return "CL_OUT_OF_RESOURCES";
-	    case -6: return "CL_OUT_OF_HOST_MEMORY";
-	    case -7: return "CL_PROFILING_INFO_NOT_AVAILABLE";
-	    case -8: return "CL_MEM_COPY_OVERLAP";
-	    case -9: return "CL_IMAGE_FORMAT_MISMATCH";
-	    case -10: return "CL_IMAGE_FORMAT_NOT_SUPPORTED";
-	    case -11: return "CL_BUILD_PROGRAM_FAILURE";
-	    case -12: return "CL_MAP_FAILURE";
-	    case -13: return "CL_MISALIGNED_SUB_BUFFER_OFFSET";
-	    case -14: return "CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST";
-	    case -15: return "CL_COMPILE_PROGRAM_FAILURE";
-	    case -16: return "CL_LINKER_NOT_AVAILABLE";
-	    case -17: return "CL_LINK_PROGRAM_FAILURE";
-	    case -18: return "CL_DEVICE_PARTITION_FAILED";
-	    case -19: return "CL_KERNEL_ARG_INFO_NOT_AVAILABLE";
-
-	    /* compile-time errors */
-	    case -30: return "CL_INVALID_VALUE";
-	    case -31: return "CL_INVALID_DEVICE_TYPE";
-	    case -32: return "CL_INVALID_PLATFORM";
-	    case -33: return "CL_INVALID_DEVICE";
-	    case -34: return "CL_INVALID_CONTEXT";
-	    case -35: return "CL_INVALID_QUEUE_PROPERTIES";
-	    case -36: return "CL_INVALID_COMMAND_QUEUE";
-	    case -37: return "CL_INVALID_HOST_PTR";
-	    case -38: return "CL_INVALID_MEM_OBJECT";
-	    case -39: return "CL_INVALID_IMAGE_FORMAT_DESCRIPTOR";
-	    case -40: return "CL_INVALID_IMAGE_SIZE";
-	    case -41: return "CL_INVALID_SAMPLER";
-	    case -42: return "CL_INVALID_BINARY";
-	    case -43: return "CL_INVALID_BUILD_OPTIONS";
-	    case -44: return "CL_INVALID_PROGRAM";
-	    case -45: return "CL_INVALID_PROGRAM_EXECUTABLE";
-	    case -46: return "CL_INVALID_KERNEL_NAME";
-	    case -47: return "CL_INVALID_KERNEL_DEFINITION";
-	    case -48: return "CL_INVALID_KERNEL";
-	    case -49: return "CL_INVALID_ARG_INDEX";
-	    case -50: return "CL_INVALID_ARG_VALUE";
-	    case -51: return "CL_INVALID_ARG_SIZE";
-	    case -52: return "CL_INVALID_KERNEL_ARGS";
-	    case -53: return "CL_INVALID_WORK_DIMENSION";
-	    case -54: return "CL_INVALID_WORK_GROUP_SIZE";
-	    case -55: return "CL_INVALID_WORK_ITEM_SIZE";
-	    case -56: return "CL_INVALID_GLOBAL_OFFSET";
-	    case -57: return "CL_INVALID_EVENT_WAIT_LIST";
-	    case -58: return "CL_INVALID_EVENT";
-	    case -59: return "CL_INVALID_OPERATION";
-	    case -60: return "CL_INVALID_GL_OBJECT";
-	    case -61: return "CL_INVALID_BUFFER_SIZE";
-	    case -62: return "CL_INVALID_MIP_LEVEL";
-	    case -63: return "CL_INVALID_GLOBAL_WORK_SIZE";
-	    case -64: return "CL_INVALID_PROPERTY";
-	    case -65: return "CL_INVALID_IMAGE_DESCRIPTOR";
-	    case -66: return "CL_INVALID_COMPILER_OPTIONS";
-	    case -67: return "CL_INVALID_LINKER_OPTIONS";
-	    case -68: return "CL_INVALID_DEVICE_PARTITION_COUNT";
-
-	    /* extension errors */
-	    case -1000: return "CL_INVALID_GL_SHAREGROUP_REFERENCE_KHR";
-	    case -1001: return "CL_PLATFORM_NOT_FOUND_KHR";
-	    case -1002: return "CL_INVALID_D3D10_DEVICE_KHR";
-	    case -1003: return "CL_INVALID_D3D10_RESOURCE_KHR";
-	    case -1004: return "CL_D3D10_RESOURCE_ALREADY_ACQUIRED_KHR";
-	    case -1005: return "CL_D3D10_RESOURCE_NOT_ACQUIRED_KHR";
-	    default: return "Unknown OpenCL error";
-		}
-}
+#define KERNELS_FILE_PATH "mix2/kernels.cl.c"
   
 
-int main(int argc, char **argv)
+int void_mix(int argc, char **argv)
 {
 	int pnumber;
 	int tnumber;
@@ -124,15 +49,11 @@ int main(int argc, char **argv)
 	
 	read_arguments(argc, argv, &ppath, &threshold, &cpath_prefix);
 	
-	print_timestamp("Ejecutando qdelaunay...\n", t);
 	read_qdelaunay_data(ppath, &r, &p, &adj, &area, &pnumber, &tnumber, align_settings);
 	
-
-
-
-	printf("* %d triángulos\n", tnumber);
-	printf("* %d puntos\n", pnumber);
-	print_timestamp("Preparando para procesamiento paralelo...\n", t);
+	struct timeval tstart;
+	struct timeval tend;
+	gettimeofday(&tstart, NULL);
 	
 	new_aligned_mem_size = align_settings[1];
 	
@@ -182,17 +103,10 @@ int main(int argc, char **argv)
 	ret = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_DEFAULT, 1, &device_id, &ret_num_devices);
 	ret = clGetDeviceInfo(device_id, CL_DEVICE_NAME, sizeof(dev_name), dev_name, NULL);
 	
-  /*	printf("* Trabajando con: %s\n, número de plataformas %d %d", dev_name, ret_num_devices, ret_num_devices);*/
-  printf("* Trabajando con: %s\n", dev_name);
 
-  cl_uint native_double_width;    
-  clGetDeviceInfo(device_id, CL_DEVICE_NATIVE_VECTOR_WIDTH_DOUBLE, sizeof(cl_uint), &native_double_width, NULL);
+	cl_uint native_double_width;    
+	clGetDeviceInfo(device_id, CL_DEVICE_NATIVE_VECTOR_WIDTH_DOUBLE, sizeof(cl_uint), &native_double_width, NULL);
 
-  if(native_double_width == 0){
-    printf("No double precision support.\n");
-  }else{
-    printf("Double precision support.\n");
-  }
 
 
 	/* Crear contexto de OpenCL. */
@@ -204,12 +118,10 @@ int main(int argc, char **argv)
 
 	/* configuracion de work groups */
 	/* Trabajar en una dimensión. */
-	size_t localSize[1] = {tnumber};
+	size_t localSize[1] = {pow(2, 9)};
 	size_t numLocalGroups = ceil(((float)tnumber)/localSize[0]);
 
 	size_t global_work_size[1] = {localSize[0] * numLocalGroups}; /* <--- POR CHEQUEAR SI SUPERA MAXIMO */
-
-	printf("%ld work items per workgroup, %ld workgroups, %ld total work items\n", localSize[0], numLocalGroups, global_work_size[0]);
 	
 	/* Crear búferes de memoria. */
 	memobj_r = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, 2 * sizeof(double) * pnumber, r, &ret);
@@ -222,6 +134,7 @@ int main(int argc, char **argv)
 	memobj_visited = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, sizeof(int) * tnumber, visited, &ret);
 	memobj_disconnect = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, 3 * sizeof(int) * tnumber, disconnect, &ret);
 	memobj_type = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, sizeof(int) * tnumber, type, &ret);
+
 	
 	/* Crear programa. */
 	program = create_program(context, KERNELS_FILE_PATH, device_id);
@@ -237,41 +150,39 @@ int main(int argc, char **argv)
 	ret = clSetKernelArg(kernel0, 0, sizeof(cl_mem), (void *)&memobj_is_seed);
 	ret = clSetKernelArg(kernel0, 1, sizeof(cl_mem), (void *)&memobj_visited);
 	ret = clSetKernelArg(kernel0, 2, sizeof(cl_mem), (void *)&memobj_disconnect);
+	ret = clSetKernelArg(kernel0, 3, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel1, 0, sizeof(cl_mem), (void *)&memobj_r);
 	ret = clSetKernelArg(kernel1, 1, sizeof(cl_mem), (void *)&memobj_p);
 	ret = clSetKernelArg(kernel1, 2, sizeof(cl_mem), (void *)&memobj_max);
+	ret = clSetKernelArg(kernel1, 3, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel2, 0, sizeof(cl_mem), (void *)&memobj_p);
 	ret = clSetKernelArg(kernel2, 1, sizeof(cl_mem), (void *)&memobj_adj);
 	ret = clSetKernelArg(kernel2, 2, sizeof(cl_mem), (void *)&memobj_max);
 	ret = clSetKernelArg(kernel2, 3, sizeof(cl_mem), (void *)&memobj_disconnect);
 	ret = clSetKernelArg(kernel2, 4, sizeof(cl_mem), (void *)&memobj_is_seed);
+	ret = clSetKernelArg(kernel2, 5, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel3, 0, sizeof(cl_mem), (void *)&memobj_adj);
 	ret = clSetKernelArg(kernel3, 1, sizeof(cl_mem), (void *)&memobj_disconnect);
+	ret = clSetKernelArg(kernel3, 2, sizeof(int), &tnumber);
 	
 	ret = clSetKernelArg(kernel5, 0, sizeof(cl_mem), (void *)&memobj_type);
 	ret = clSetKernelArg(kernel5, 1, sizeof(cl_mem), (void *)&memobj_adj);
 	ret = clSetKernelArg(kernel5, 2, sizeof(cl_mem), (void *)&memobj_root_id);
+	ret = clSetKernelArg(kernel5, 3, sizeof(int), &tnumber);
 	clFinish(command_queue);
 
-	print_timestamp("Ejecutando primera fase de kerneles...\n", t);
-
-	
 
 	/* Encolar kerneles en cola de comandos. */
 	ret = clEnqueueNDRangeKernel(command_queue, kernel0, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	printf("kernel0: %s\n", getErrorString(ret));
 
 	ret = clEnqueueNDRangeKernel(command_queue, kernel1, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	printf("kernel1: %s\n", getErrorString(ret));
 
 	ret = clEnqueueNDRangeKernel(command_queue, kernel2, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	printf("kernel2: %s\n", getErrorString(ret));
 	
 	ret = clEnqueueNDRangeKernel(command_queue, kernel3, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	printf("kernel3: %s\n", getErrorString(ret));
 	
 	clFinish(command_queue);
 
@@ -280,7 +191,6 @@ int main(int argc, char **argv)
 	map_is_seed = clEnqueueMapBuffer(command_queue, memobj_is_seed, CL_TRUE, CL_MAP_READ, 
 																	0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
 
-	printf("Read is_seed: %s\n", getErrorString(ret));
 
 	map_area = clEnqueueMapBuffer(command_queue, memobj_area, CL_TRUE, CL_MAP_READ,
 																	0, sizeof(double) * tnumber, 0, NULL, NULL,  &ret);
@@ -335,9 +245,6 @@ int main(int argc, char **argv)
 	printf("\n");
 	printf("\n");
 	#endif
-
-	print_timestamp("Ejecutando fase secuencial...\n", t);
-
 
 
 	/* Etapa secuencial: Hacer un DFS a cada nodo no visitado, para comunicarle
@@ -418,7 +325,6 @@ int main(int argc, char **argv)
 	}
 	
 	clFinish(command_queue);
-	print_timestamp("Ejecutando última fase de kerneles...\n", t);
 	
 	/* Encolar último kernel. */
 	ret = clEnqueueNDRangeKernel(command_queue, kernel5, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
@@ -433,31 +339,45 @@ int main(int argc, char **argv)
 	
 	/* Forzar ejecución de comandos pendientes en cola. */
 	clFinish(command_queue);
-	
+
+
+	int time = 0;
+	gettimeofday(&tend, NULL);
+	time += ((tend.tv_sec - tstart.tv_sec) * 1000000) + (tend.tv_usec - tstart.tv_usec);
+
+	/*
 	printf("* Número de vacíos internos: %d (%d triángulos)\n", num_ivoids, num_ivoid_triangs);
 	printf("* Número de vacíos de borde: %d (%d triángulos)\n", num_bvoids, num_bvoid_triangs);
 	printf("* Número de murallas: %d (%d triángulos)\n", num_walls, num_wall_triangs);
 	printf("* Número de no-zonas: %d (%d triángulos)\n", num_nonzones, num_nonzone_triangs);
-	
-	print_timestamp("Escribiendo datos...\n", t);
-	
+
+
 	write_classification(cpath_prefix, root_id, type, area, tnumber, num_nonzone_triangs,
-												num_ivoid_triangs, num_bvoid_triangs, num_wall_triangs);
-	
+												num_ivoid_triangs, num_bvoid_triangs, num_wall_triangs);*/
 	/* Liberar memoria. */
+
+	free(root_id);
+	free(type);
+	free(area);
 	free(r);
 	free(p);
 	free(adj);
-	free(area);
 	free(max);
 	free(is_seed);
-	free(root_id);
 	free(visited);
 	free(disconnect);
-	free(type);
+
+	clReleaseMemObject(memobj_r);
+	clReleaseMemObject(memobj_p);
+	clReleaseMemObject(memobj_adj);
+	clReleaseMemObject(memobj_max);
+	clReleaseMemObject(memobj_is_seed);
+	clReleaseMemObject(memobj_root_id);
+	clReleaseMemObject(memobj_area);
+	clReleaseMemObject(memobj_visited);
+	clReleaseMemObject(memobj_disconnect);
+	clReleaseMemObject(memobj_type);
 	
-	print_timestamp("Fin.\n", t);
-	
-	return EXIT_SUCCESS;
+	return time;
 }
 

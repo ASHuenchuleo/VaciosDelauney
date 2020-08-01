@@ -1,11 +1,5 @@
 /* Prototipos de funciones para manejar entrada y salida de datos. */
 
-struct test_result
-{
-   CpuAutomata* automata;
-   long int time;
-};
-
 extern void read_qdelaunay_data(char *ppath, double **r, int **p, int **ady,
 																double **a, int *pnumber, int *tnumuber, void *align_settings);
 extern void write_classification(char *cpath_prefix, int *root_id, int *type, double *area,
