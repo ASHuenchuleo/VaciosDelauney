@@ -342,7 +342,10 @@ int main(int argc, char **argv)
 	#endif
 
 	print_timestamp("Ejecutando fase secuencial...\n", t);
-
+	map_type = clEnqueueMapBuffer(command_queue, memobj_type, CL_TRUE, CL_MAP_WRITE, 
+																	0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
+	map_area = clEnqueueMapBuffer(command_queue, memobj_area, CL_TRUE, CL_MAP_WRITE,
+																	0, sizeof(double) * tnumber, 0, NULL, NULL,  &ret);
 
 
 	/* Etapa secuencial: Hacer un DFS a cada nodo no visitado, para comunicarle
@@ -421,7 +424,8 @@ int main(int argc, char **argv)
 			num_regs++;
 		}
 	}
-	
+	clEnqueueUnmapMemObject(command_queue, memobj_area, map_area, 0, NULL, NULL);
+	clEnqueueUnmapMemObject(command_queue, memobj_type, map_type, 0, NULL, NULL);
 	clFinish(command_queue);
 	print_timestamp("Ejecutando última fase de kerneles...\n", t);
 	
@@ -429,9 +433,9 @@ int main(int argc, char **argv)
 	ret = clEnqueueNDRangeKernel(command_queue, kernel5, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
 	/* Encolar regreso de datos. */
-	map_type = clEnqueueMapBuffer(command_queue, memobj_type, CL_TRUE, CL_MAP_WRITE, 
+	map_type = clEnqueueMapBuffer(command_queue, memobj_type, CL_TRUE, CL_MAP_READ, 
 																	sizeof(type), 0, 0, NULL, NULL, NULL);
-	map_area = clEnqueueMapBuffer(command_queue, memobj_area, CL_TRUE, CL_MAP_WRITE, 
+	map_area = clEnqueueMapBuffer(command_queue, memobj_area, CL_TRUE, CL_MAP_READ, 
 																	sizeof(area), 0, 0, NULL, NULL, NULL);
 	clEnqueueUnmapMemObject(command_queue, memobj_type, map_type, 0, NULL, NULL);
 	clEnqueueUnmapMemObject(command_queue, memobj_area, map_area, 0, NULL, NULL);

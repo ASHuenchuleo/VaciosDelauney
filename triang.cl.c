@@ -1,3 +1,16 @@
+
+
+/* same_edge
+ * 
+ * Indica para las aristas {u,v} y {w,x} si son iguales o no.
+ * */
+ 
+int same_edge(int u, int v, int w, int x)
+{
+	return (u == w && v == x) || (u == x && v == w);
+}
+
+
 /* max_edge_index
  * 
  * Retorna el índice k de la arista máxima de un triángulo i, 
@@ -39,16 +52,6 @@ int max_edge_index(int i, global double *r, global int *p)
 
 
 
-/* same_edge
- * 
- * Indica para las aristas {u,v} y {w,x} si son iguales o no.
- * */
- 
-int same_edge(int u, int v, int w, int x)
-{
-	return (u == w && v == x) || (u == x && v == w);
-}
-
 
 
 /* get_edge_index
@@ -86,18 +89,18 @@ int get_edge_index(int u, int v, int i, global int *p)
 }
 
 
-
-/* is_nomax_nomax
+/* get_common_edge
  * 
- * Indica si la arista compartida entre los triángulos i y j
- * es nomáx-nomáx.
+ * Entrega el índice interno de arista en común entra el triángulo i y j
+ * para cada uno de los triángulos
  * */
 
-int is_nomax_nomax(int i, int j, global int *p, global int *max)
+void get_common_edge(int i, int j, int* edge_i, int* edge_j, global int *p)
 {
 	int p0i;
 	int p1i;
 	int p2i;
+	
 	int p0j;
 	int p1j;
 	int p2j;
@@ -160,13 +163,13 @@ int is_nomax_nomax(int i, int j, global int *p, global int *max)
 	}
 	else
 	{
-		printf("** ERROR ** is_nomax_nomax: Problema insperado para triángulos %d y %d.\n", i, j);
+		printf("** ERROR ** must_disconnect: Problema insperado para triángulos %d y %d.\n", i, j);
 		/*exit(EXIT_FAILURE);*/
 	}
 	
-	return (ij != max[j]) && (ii != max[i]);
+	*edge_i = ii;
+	*edge_j = ij;
 }
-
 
 
 /* is_max_max
@@ -177,75 +180,55 @@ int is_nomax_nomax(int i, int j, global int *p, global int *max)
 
 int is_max_max(int i, int j, global int *p, global int *max)
 {
-	int p0i;
-	int p1i;
-	int p2i;
-	
-	int p0j;
-	int p1j;
-	int p2j;
-	
-	p0i = p[3*i + 0];
-	p1i = p[3*i + 1];
-	p2i = p[3*i + 2];
-	
-	p0j = p[3*j + 0];
-	p1j = p[3*j + 1];
-	p2j = p[3*j + 2];
-	
-	int ij;
-	int ii;
-	
-	if(same_edge(p0i, p1i, p0j, p1j))
-	{
-		ij = get_edge_index(p0j, p1j, j, p);
-		ii = 0;
-	}
-	else if(same_edge(p1i, p2i, p0j, p1j))
-	{
-		ij = get_edge_index(p0j, p1j, j, p);
-		ii = 1;
-	}
-	else if(same_edge(p2i, p0i, p0j, p1j))
-	{
-		ij = get_edge_index(p0j, p1j, j, p);
-		ii = 2;
-	}
-	else if(same_edge(p0i, p1i, p1j, p2j))
-	{
-		ij = get_edge_index(p1j, p2j, j, p);
-		ii = 0;
-	}
-	else if(same_edge(p1i, p2i, p1j, p2j))
-	{
-		ij = get_edge_index(p1j, p2j, j, p);
-		ii = 1;
-	}
-	else if(same_edge(p2i, p0i, p1j, p2j))
-	{
-		ij = get_edge_index(p1j, p2j, j, p);
-		ii = 2;
-	}
-	else if(same_edge(p0i, p1i, p2j, p0j))
-	{
-		ij = get_edge_index(p2j, p0j, j, p);
-		ii = 0;
-	}
-	else if(same_edge(p1i, p2i, p2j, p0j))
-	{
-		ij = get_edge_index(p2j, p0j, j, p);
-		ii = 1;
-	}
-	else if(same_edge(p2i, p0i, p2j, p0j))
-	{
-		ij = get_edge_index(p2j, p0j, j, p);
-		ii = 2;
-	}
-	else
-	{
-		printf("** ERROR ** is_max_max: Problema insperado para triángulos %d y %d.\n", i, j);
-		/*exit(EXIT_FAILURE);*/
-	}
-	
+
+	int* edge_i;
+	int* edge_j;
+
+	get_common_edge(i, j, edge_i, edge_j, p);
+	int ii = *edge_i;
+	int ij = *edge_j;
+
 	return (ij == max[j]) && (ii == max[i]);
 }
+
+
+
+/* is_nomax_nomax
+ * 
+ * Indica si la arista compartida entre los triángulos i y j
+ * es nomáx-nomáx.
+ * */
+
+int is_nomax_nomax(int i, int j, global int *p, global int *max)
+{
+	int* edge_i;
+	int* edge_j;
+	get_common_edge(i, j, edge_i, edge_j, p);
+
+	int ii = *edge_i;
+	int ij = *edge_j;
+
+
+	return (ij != max[j]) && (ii != max[i]);
+}
+
+
+
+
+/* must_disconnect
+ * 
+ * Indica si la arista compartida entre los triángulos i y j
+ * es nomax-nomax o es una arista terminal que debe ser eliminada
+ * */
+
+int must_disconnect(int i, int j, global int *p, global int *max)
+{
+	int* edge_i;
+	int* edge_j;
+	get_common_edge(i, j, edge_i, edge_j, p);
+	int ii = *edge_i;
+	int ij = *edge_j;
+	return (ii != max[i]) || (ij == max[j] && ii == max[i] && j > i);
+}
+
+

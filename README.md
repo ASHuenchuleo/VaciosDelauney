@@ -1,0 +1,4 @@
+# How to
+Para compilar las pruebas, se debe correr make en el directorio raiz, y luego ejecutar test. Los tres algoritmos están en los directorios sec2, mix2, y paralelo2 para la versión secuencial, mixta, y paralela respectivamente. Para compilarlos, se debe ir al directorio del que se quiere usar, compilar con make, y luego correr ./uwu [archivo puntos] [threshold] [prefijo archivos clasificación].
+
+Hay un archivo de puntos de prueba en el directorio raiz. El código que hizo el alumno está en las carpetas mix2 y paralelo2, tanto en el código de host como de kernel. La versión original con la que se empezó está en la carpeta old  con propósito de comparacion.  Esa versión solo funciona en CPU.

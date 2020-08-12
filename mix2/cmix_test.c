@@ -345,13 +345,13 @@ int void_mix(int argc, char **argv)
 	gettimeofday(&tend, NULL);
 	time += ((tend.tv_sec - tstart.tv_sec) * 1000000) + (tend.tv_usec - tstart.tv_usec);
 
-	/*
+	
 	printf("* Número de vacíos internos: %d (%d triángulos)\n", num_ivoids, num_ivoid_triangs);
 	printf("* Número de vacíos de borde: %d (%d triángulos)\n", num_bvoids, num_bvoid_triangs);
 	printf("* Número de murallas: %d (%d triángulos)\n", num_walls, num_wall_triangs);
 	printf("* Número de no-zonas: %d (%d triángulos)\n", num_nonzones, num_nonzone_triangs);
 
-
+	/*
 	write_classification(cpath_prefix, root_id, type, area, tnumber, num_nonzone_triangs,
 												num_ivoid_triangs, num_bvoid_triangs, num_wall_triangs);*/
 	/* Liberar memoria. */

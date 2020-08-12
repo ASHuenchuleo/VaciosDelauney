@@ -13,3 +13,6 @@
 #define INNER_VOID 0
 #define BORDER_VOID 1
 #define WALL 2
+
+/* Identificadores para marcar nodos en la computacion segmenteda */
+#define STARTS_SECTION 1

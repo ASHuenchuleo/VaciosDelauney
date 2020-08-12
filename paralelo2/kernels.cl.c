@@ -1,9 +1,6 @@
 #include "consts.h"
 #include "triang.cl.c"
 
-
-
-
 /* initialize_values
  * 
  * Inicializa los valores de is_seed y visited.
@@ -25,6 +22,15 @@ kernel void initialize_values(global int *is_seed, global int *starts_segment,
 		area_next[i] = area[i];
 	}
 
+}
+
+kernel void initialize_to_zero(global int *a, int tnumber){
+	int i;
+	
+	i = get_global_id(0);
+	if(i < tnumber){
+		a[i] = 0;
+	}
 }
 
 /* mark_max_max
@@ -121,31 +127,20 @@ kernel void set_succesor(global int *parent, global int *succesor_next,
 		parent[i] = succesor_next[i];
 }
 
-/* init_parent_copy
-* Creates a copy of the parent array
-*/
-kernel void init_parent_copy(global int *parent, global int *parent_copy,
-								int tnumber){
-	int i = get_global_id(0);
-	if(i < tnumber)
-		parent_copy[i] = parent[i];
-}
-
 /* http://www.bealto.com/gpu-sorting_parallel-merge-local.html */
 kernel void ParallelMerge_Local(global int *parent, global int *ordering, local int *aux, local int *ans, int tnumber)
 {
   int ig = get_global_id(0);
-  if(ig > tnumber){
+  if(ig < tnumber){
   	int i = get_local_id(0); // index in workgroup
   	int wg = get_local_size(0); // workgroup size = block size, power of 2
 
   	// Move IN, OUT to block start
   	int offset = get_group_id(0) * wg;
-  	parent += offset; ordering += offset;
+  	ordering += offset;
 
   	// Load block in AUX[WG]
-  	aux[i] = ordering[i];
-  	// ans is originally 0, 1, 2, ... This is sorted according to ordering
+  	aux[i] = parent[ig];
   	ans[i] = ig;
   	barrier(CLK_LOCAL_MEM_FENCE); // make sure AUX is entirely up to date
 
@@ -159,23 +154,121 @@ kernel void ParallelMerge_Local(global int *parent, global int *ordering, local 
   	  for (int inc=length;inc>0;inc>>=1) // increment for dichotomic search
   	  {
   	    int j = sibling+pos+inc-1;
-  	    uint jKey = aux[j];
-  	    bool smaller = (jKey < iKey) || ( jKey == iKey && j < i );
-  	    pos += (smaller)?inc:0;
-  	    pos = min(pos,length);
+  	    if(offset + j < tnumber){
+  	    	uint jKey = aux[j];
+  	    	bool smaller = (jKey < iKey) || ( jKey == iKey && j < i );
+  	    	pos += (smaller)?inc:0;
+  	    	pos = min(pos,length);
+  	    }
   	  }
   	  int bits = 2*length-1; // mask for destination
   	  int dest = ((ii + pos) & bits) | (i & ~bits); // destination index in merged sequence
   	  barrier(CLK_LOCAL_MEM_FENCE);
   	  aux[dest] = iKey;
+  	  // ans is originally 0, 1, 2, ... This is sorted according to ordering
   	  ans[dest] = ig;
   	  barrier(CLK_LOCAL_MEM_FENCE);
   	}
 
   	// Write output
-  	ordering[i] = ans[i];
+  	ordering[ig] = aux[i];
   }
 }
+
+
+
+__kernel void ParallelSelection(global int *parent, global int *ordering, local int *aux, local int *ans, int tnumber)
+{
+  int i = get_global_id(0); // current thread
+  if(i < tnumber){
+  	int n = get_global_size(0); // input size
+  	uint iKey = parent[i];
+  	// Compute position of in[i] in output
+  	int pos = 0;
+  	for (int j=0;j<tnumber;j++)
+  	{
+  	  uint jKey = parent[j]; // broadcasted
+  	  bool smaller = (jKey < iKey) || (jKey == iKey && j < i);  // in[j] < in[i] ?
+  	  pos += (smaller)?1:0;
+  	}
+  	ordering[pos] = i;
+  }
+
+}
+
+__kernel void ParallelBitonic_Local(global int * in, global int * out, local int * aux, local int *ans, int tnumber)
+{
+  int ig = get_global_id(0);
+  int i = get_local_id(0); // index in workgroup
+  int wg = get_local_size(0); // workgroup size = block size, power of 2
+
+  // Move IN, OUT to block start
+  int offset = get_group_id(0) * wg;
+  in += offset; out += offset;
+
+  // Load block in AUX[WG]
+  aux[i] = in[i];
+  ans[i] = out[i];
+  barrier(CLK_LOCAL_MEM_FENCE); // make sure AUX is entirely up to date
+
+  // Loop on sorted sequence length
+  for (int length=1;length<wg;length<<=1)
+  {
+    bool direction = ((i & (length<<1)) != 0); // direction of sort: 0=asc, 1=desc
+    // Loop on comparison distance (between keys)
+    for (int inc=length;inc>0;inc>>=1)
+    {
+      int j = i ^ inc; // sibling to compare
+      int iKey = aux[i];
+      int jKey = aux[j];
+
+      int iKeyout = out[i];
+      int jKeyout = out[j];
+
+      bool smaller = (jKey < iKey) || ( jKey == iKey && j < i );
+      bool swap = smaller ^ (j < i) ^ direction;
+      barrier(CLK_LOCAL_MEM_FENCE);
+      aux[i] = (swap)?jKey:iKey;
+      ans[i] = (swap)?iKeyout:jKeyout;
+      barrier(CLK_LOCAL_MEM_FENCE);
+    }
+  }
+
+  // Write output
+  out[i] = ans[i];
+}
+
+__kernel void ParallelBitonic_A(global int * in, global int * out, global int * inOrdering, global int * outOrdering,
+										int tnumber, int inc, int dir)
+{
+  int i = get_global_id(0); // thread index
+  if(i < tnumber){
+  	uint iKey = in[i];
+  	uint iKeyOrdering = inOrdering[i];
+  	out[i] = iKey;
+  	outOrdering[i] = iKeyOrdering;
+  	int j = i ^ inc; // sibling to compare
+  	if(j < tnumber){
+  	  	bool swap = j < tnumber;
+
+  		// Load values at I and J
+  		uint jKey = in[j];
+
+  		uint jKeyOrdering = inOrdering[j];
+
+  		// Compare
+  		bool smaller = (jKey < iKey) || ( jKey == iKey && j < i );
+  		swap = swap && (smaller ^ (j < i) ^ ((dir & i) != 0));
+  	  	// Store
+
+  	  	out[i] = (swap)?jKey:iKey;
+  	  	outOrdering[i] = (swap)?jKeyOrdering:iKeyOrdering;
+  	}
+
+  }
+}
+
+
 
 
 /* init_linked
@@ -197,11 +290,11 @@ kernel void init_linked(global int *linked, global int *ordering,
 /* init_linked_copy
 * Creates a copy of the linked list ordering
 */
-kernel void init_linked_copy(global int *linked, global int *linked_copy,
+kernel void copy_array(global int *in, global int *out,
 								int tnumber){
 	int i = get_global_id(0);
 	if(i < tnumber)
-		linked_copy[i] = linked[i];
+		out[i] = in[i];
 }
 
 /* mark_start_end
@@ -215,12 +308,12 @@ kernel void mark_start_end(global int *linked, global int *parent,
 	int i;
 	i = get_global_id(0);
 	if(i < tnumber){
-		/* If its the end of a section */
+		/* If its the start of a section */
 		if(i == 0){
 			starts_segment[0] = STARTS_SECTION;
 			starts_segment_next[0] = STARTS_SECTION;
 		}
-		if(parent[i] != parent[linked[i]]){
+		if(linked[i] != NO_ADJ && parent[i] != parent[linked[i]]){
 			starts_segment[linked[i]] = STARTS_SECTION;
 			starts_segment_next[linked[i]] = STARTS_SECTION;
 		}
@@ -241,6 +334,7 @@ kernel void find_area_jumping(global int *linked, global int *linked_next,
 	i = get_global_id(0);
 	if(i < tnumber){
 		int j = linked[i];
+
 		if(j != NO_ADJ){
 			if(!starts_segment[j]){
 				starts_segment_next[j] = starts_segment[i];
@@ -272,6 +366,53 @@ kernel void set_area_jumping(global int *linked, global int *linked_next,
 	}
 }
 
+
+/* count_class
+* Counts the number of triangles per classification
+*/
+kernel void count_class(global int *type,
+								local int *prod, global int *prod_wg,
+								int class, int tnumber){
+	int i = get_global_id(0);
+	int il = get_local_id(0);
+	int numItems = get_local_size(0);
+	int wgNum = get_group_id(0);
+
+	prod[il] = i < tnumber ? type[i] == class : 0;
+	barrier(CLK_LOCAL_MEM_FENCE);
+	for(int offset = 1; offset < numItems; offset *= 2){
+		int mask = 2 * offset - 1;
+		if((il & mask) == 0){
+			if(il + offset < numItems)
+				prod[il] += prod[il + offset];
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+	}
+	if(il == 0)
+		prod_wg[wgNum] = prod[0];
+}
+
+
+/* communicate_types_areas
+ * 
+ * Comunica a cada triángulo el área total y tipo de región contenido en su
+ * nodo raíz.
+ * */
+
+kernel void communicate_types_areas(global int *type, global double *area,
+																		global int *parent, int tnumber)
+{
+	int i;
+	
+	i = get_global_id(0);
+	if(i < tnumber){
+		if(parent[i] != NO_ADJ){
+			area[i] = area[parent[i]];
+			type[i] = type[parent[i]];
+		}
+	}
+}
+
 /* communicate_data_to_root
 * Finds the type of each tree and communicates that to the parent
 * also counts the type of each area.
@@ -283,6 +424,7 @@ kernel void communicate_data_to_root(global int* parent, global int* linked, glo
 											double threshold, int tnumber){
 
 	int i = get_global_id(0);
+
 	if(i < tnumber){
 		segment_role[i] = -2;
 		if(parent[i] == -1){
@@ -307,57 +449,6 @@ kernel void communicate_data_to_root(global int* parent, global int* linked, glo
 				}
 				segment_role[i] = type[parent[i]];
 			}
-		}
-	}
-}
-
-/* count_class
-* Counts the number of triangles per classification
-*/
-kernel void count_class(global int *type,
-								local int *prod, global int *prod_wg,
-								int class, int tnumber){
-	int i = get_global_id(0);
-	int il = get_local_id(0);
-	int numItems = get_local_size(0);
-	int wgNum = get_group_id(0);
-
-	prod[il] = i < tnumber ? type[i] == class : 0;
-	barrier(CLK_LOCAL_MEM_FENCE);
-
-
-
-	for(int offset = 1; offset < numItems; offset *= 2){
-		int mask = 2 * offset - 1;
-		if((il & mask) == 0){
-			//printf("wgid %i, i %i/%i, il %i/%i, off %i, il + off %i/%i, prod %i\n", wgNum, i, tnumber, il, numItems, offset, il + offset, numItems, prod[il + offset]);
-			if(il + offset < numItems)
-				prod[il] += prod[il + offset];
-		}
-		barrier(CLK_LOCAL_MEM_FENCE);
-	}
-
-	if(il == 0)
-		prod_wg[wgNum] = prod[0];
-}
-
-
-/* communicate_types_areas
- * 
- * Comunica a cada triángulo el área total y tipo de región contenido en su
- * nodo raíz.
- * */
-
-kernel void communicate_types_areas(global int *type, global double *area,
-																		global int *parent, int tnumber)
-{
-	int i;
-	
-	i = get_global_id(0);
-	if(i < tnumber){
-		if(parent[i] != NO_ADJ){
-			area[i] = area[parent[i]];
-			type[i] = type[parent[i]];
 		}
 	}
 }

@@ -189,6 +189,9 @@ void mergeSortInt(int* arr, int* crit, int l, int r)
 
 int void_par(int argc, char **argv)
 {
+	
+
+
 
 	int pnumber;
 	int tnumber;
@@ -197,7 +200,6 @@ int void_par(int argc, char **argv)
 	int *adj;
 
 	int *parent;
-	int *parent_copy;
 
 	int *linked;
 	int *linked_copy;
@@ -244,9 +246,15 @@ int void_par(int argc, char **argv)
 	int (*new_aligned_mem_size)(int);
 	
 	read_arguments(argc, argv, &ppath, &threshold, &cpath_prefix);
-
+	
+	print_timestamp("Ejecutando qdelaunay...\n", t);
 	read_qdelaunay_data(ppath, &r, &p, &adj, &area, &pnumber, &tnumber, align_settings);
 	
+	printf("* %d triángulos\n", tnumber);
+	printf("* %d puntos\n", pnumber);
+
+	print_timestamp("Preparando para procesamiento paralelo...\n", t);
+
 	struct timeval tstart;
 	struct timeval tend;
 	gettimeofday(&tstart, NULL);
@@ -273,7 +281,6 @@ int void_par(int argc, char **argv)
 
 	posix_memalign((void **)&type, alignment, new_aligned_mem_size(tnumber*sizeof(int)));
 	posix_memalign((void **)&parent, alignment, new_aligned_mem_size(tnumber*sizeof(int)));
-	posix_memalign((void **)&parent_copy, alignment, new_aligned_mem_size(tnumber*sizeof(int)));
 
 	posix_memalign((void **)&linked, alignment, new_aligned_mem_size(tnumber*sizeof(int)));
 	posix_memalign((void **)&linked_copy, alignment, new_aligned_mem_size(tnumber*sizeof(int)));
@@ -313,7 +320,6 @@ int void_par(int argc, char **argv)
 	cl_mem memobj_type;
 
 	cl_mem memobj_parent;
-	cl_mem memobj_parent_copy;
 
 	cl_mem memobj_linked;
 	cl_mem memobj_linked_copy;
@@ -331,15 +337,20 @@ int void_par(int argc, char **argv)
 	cl_program program;
 
 	cl_kernel init_values_kernel;
+	cl_kernel initialize_to_zero_kernel;
+
 	cl_kernel mark_max_kernel;
 	cl_kernel create_tree_kernel;
 	cl_kernel find_succesor_kernel;
 	cl_kernel set_succesor_kernel;
 
-	cl_kernel init_parent_copy_kernel;
+	cl_kernel copy_array_kernel;
+
+	cl_kernel sort_start_kernel;
+	cl_kernel sorting_local;
+	cl_kernel sorting_global;
 
 	cl_kernel init_linked_kernel;
-	cl_kernel init_linked_copy_kernel;
 
 	cl_kernel mark_end_nodes_kernel;
 	cl_kernel find_area_jumping_kernel;
@@ -355,11 +366,11 @@ int void_par(int argc, char **argv)
 	char dev_name[1024];
 	void *map_type;
 	void *map_area;
-	void *map_parent_copy;
 	void *map_linked_copy;
+	void *map_segment_role;
+
 
 	#ifdef DEBUG
-	void *map_segment_role;
 	void *map_is_seed;
 	void *map_max;
 	void *map_parent;
@@ -382,32 +393,18 @@ int void_par(int argc, char **argv)
 	ret = clGetPlatformIDs(1, &platform_id, &ret_num_platforms);
 	ret = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_DEFAULT, 1, &device_id, &ret_num_devices);
 	ret = clGetDeviceInfo(device_id, CL_DEVICE_NAME, sizeof(dev_name), dev_name, NULL);
-	
-	  /*	printf("* Trabajando con: %s\n, número de plataformas %d %d", dev_name, ret_num_devices, ret_num_devices);*/
 
-
-	  cl_uint native_double_width;    
-	  clGetDeviceInfo(device_id, CL_DEVICE_NATIVE_VECTOR_WIDTH_DOUBLE, sizeof(cl_uint), &native_double_width, NULL);
-
+	cl_uint native_double_width;    
+	clGetDeviceInfo(device_id, CL_DEVICE_NATIVE_VECTOR_WIDTH_DOUBLE, sizeof(cl_uint), &native_double_width, NULL);
 
 
 	cl_ulong localMemSize = 0;
 	clGetDeviceInfo(device_id, CL_DEVICE_LOCAL_MEM_SIZE, 
 	    sizeof(cl_ulong), &localMemSize, NULL);
-	/*
-	printf("* Trabajando con: %s\n", dev_name);
-
-	if(native_double_width == 0){
-	  printf("No double precision support.\n");
-	}else{
-	  printf("Double precision support.\n");
-	}
-	printf("Local memory size: %li integers\n", localMemSize/sizeof(int));
-	*/
-
+	
 	/* Crear contexto de OpenCL. */
 	context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &ret);
-	
+
 	/* Crear cola de comandos. */
 	/*command_queue = clCreateCommandQueueWithProperties(context, device_id, NULL, &ret);*/
 	command_queue = clCreateCommandQueue(context, device_id, 0, &ret);
@@ -432,7 +429,6 @@ int void_par(int argc, char **argv)
 	memobj_type = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, sizeof(int) * tnumber, type, &ret);
 
 	memobj_parent = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, sizeof(int) * tnumber, parent, &ret);
-	memobj_parent_copy = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, sizeof(int) * tnumber, parent_copy, &ret);
 
 	memobj_linked = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, sizeof(int) * tnumber, linked, &ret);
 	memobj_linked_copy = clCreateBuffer(context, CL_MEM_USE_HOST_PTR, sizeof(int) * tnumber, linked_copy, &ret);
@@ -452,15 +448,18 @@ int void_par(int argc, char **argv)
 	
 	/* Crear kerneles. */
 	init_values_kernel = clCreateKernel(program, "initialize_values", &ret);
+	initialize_to_zero_kernel = clCreateKernel(program, "initialize_to_zero", &ret);
+
 	mark_max_kernel = clCreateKernel(program, "mark_max_max", &ret);
 	create_tree_kernel = clCreateKernel(program, "mark_disconnections_tree", &ret);
 	find_succesor_kernel = clCreateKernel(program, "find_succesor", &ret);
 	set_succesor_kernel = clCreateKernel(program, "set_succesor", &ret);
 
-	init_parent_copy_kernel = clCreateKernel(program, "init_parent_copy", &ret);
+	copy_array_kernel = clCreateKernel(program, "copy_array", &ret);
+
+	sorting_global = clCreateKernel(program, "ParallelBitonic_A", &ret); 
 
 	init_linked_kernel = clCreateKernel(program, "init_linked", &ret);
-	init_linked_copy_kernel = clCreateKernel(program, "init_linked_copy", &ret);
 
 	mark_end_nodes_kernel = clCreateKernel(program, "mark_start_end", &ret);
 	find_area_jumping_kernel = clCreateKernel(program, "find_area_jumping", &ret);
@@ -473,9 +472,9 @@ int void_par(int argc, char **argv)
 	
 	/* Establecer argumentos para kerneles. */
 	ret = clSetKernelArg(init_values_kernel, 0, sizeof(cl_mem), (void *)&memobj_is_seed);
-	ret = clSetKernelArg(init_values_kernel, 1, sizeof(cl_mem), (void *)&memobj_segment_role);
+	ret = clSetKernelArg(init_values_kernel, 1, sizeof(cl_mem), (void *)&memobj_linked_copy);
 	ret = clSetKernelArg(init_values_kernel, 2, sizeof(cl_mem), (void *)&memobj_parent);
-	ret = clSetKernelArg(init_values_kernel, 3, sizeof(cl_mem), (void *)&memobj_linked_copy);
+	ret = clSetKernelArg(init_values_kernel, 3, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(init_values_kernel, 4, sizeof(cl_mem), (void *)&memobj_area);
 	ret = clSetKernelArg(init_values_kernel, 5, sizeof(cl_mem), (void *)&memobj_area_next);
 	ret = clSetKernelArg(init_values_kernel, 6, sizeof(int), &tnumber);
@@ -508,19 +507,202 @@ int void_par(int argc, char **argv)
 
 
 
-	ret = clSetKernelArg(init_parent_copy_kernel, 0, sizeof(cl_mem), (void *)&memobj_parent);
-	ret = clSetKernelArg(init_parent_copy_kernel, 1, sizeof(cl_mem), (void *)&memobj_parent_copy);
-	ret = clSetKernelArg(init_parent_copy_kernel, 2, sizeof(int), &tnumber);
+	clFinish(command_queue);
 
+	
+
+	/* Encolar kerneles en cola de comandos. */
+	ret = clEnqueueNDRangeKernel(command_queue, init_values_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("init_values_kernel", ret);
+	
+	ret = clEnqueueNDRangeKernel(command_queue, mark_max_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("mark_max_kernel", ret);
+	
+	ret = clEnqueueNDRangeKernel(command_queue, create_tree_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("create_tree_kernel", ret);
+		
+	int step_count;
+	/* Calcular el numero de pasos para llegar a la raiz */
+	int jumping_max_steps = ceil(log(tnumber)/log(2.));
+	for(step_count = 0; step_count < jumping_max_steps; step_count++){
+		ret = clEnqueueNDRangeKernel(command_queue, find_succesor_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+		/*printf("find_succesor_kernel: %s\n", getErrorString(ret));*/
+
+		ret = clEnqueueNDRangeKernel(command_queue, set_succesor_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+		/*printf("set_succesor_kernel: %s\n", getErrorString(ret));*/
+	}
+
+
+	ret = clSetKernelArg(copy_array_kernel, 0, sizeof(cl_mem), (void *)&memobj_parent);
+	ret |= clSetKernelArg(copy_array_kernel, 1, sizeof(cl_mem), (void *)&memobj_linked_copy);
+	ret |= clSetKernelArg(copy_array_kernel, 2, sizeof(int), &tnumber);
+
+	ret = clEnqueueNDRangeKernel(command_queue, copy_array_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	retDebug("copy_array_kernel", ret);
+
+
+	/* segment role has the values for the parent
+	*	linked has the values for the ordering
+	*/
+	/*
+		cl_mem buffers[2];
+		buffers[0] = memobj_linked_copy;
+		buffers[1] = memobj_linked;
+
+		cl_mem buffersOrdering[2];
+		buffersOrdering[0] = memobj_segment_role;
+		buffersOrdering[1] = memobj_segment_role_next;
+		int current = 0;
+		int nk = 0;
+		int inc;
+		int length;
+		int dir;
+		int tnumber_padded = ((int)ceil((double)tnumber/localSize[0])) * localSize[0];
+		for (length=1;length<tnumber_padded;length<<=1) for (inc=length;inc>0;inc>>=1)
+		{
+		  dir = length<<1;
+		  ret = clSetKernelArg(sorting_global, 0, sizeof(cl_mem), (void *)&buffers[current]);
+		  ret |= clSetKernelArg(sorting_global, 1, sizeof(cl_mem), (void *)&buffers[1-current]);
+		  ret |= clSetKernelArg(sorting_global, 2, sizeof(cl_mem), (void *)&buffersOrdering[current]);
+		  ret |= clSetKernelArg(sorting_global, 3, sizeof(cl_mem), (void *)&buffersOrdering[1-current]);
+		  ret |= clSetKernelArg(sorting_global, 4, sizeof(int), &tnumber);
+		  ret |= clSetKernelArg(sorting_global, 5, sizeof(int), &inc);
+		  ret |= clSetKernelArg(sorting_global, 6, sizeof(int), &dir);
+		  retDebug("sorting_global args", ret);
+
+		  ret = clEnqueueNDRangeKernel(command_queue, sorting_global, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+		  retDebug("sorting_global", ret);
+
+		  clFinish(command_queue);
+
+		  current = 1-current;
+		  nk++;
+		}
+		cl_mem memobj_ordering = memobj_segment_role;
+		if(current == 0){
+			memobj_ordering = memobj_segment_role_next;
+		}
+	*/
+	
+		map_linked_copy = clEnqueueMapBuffer(command_queue, memobj_linked_copy, CL_TRUE, CL_MAP_WRITE,
+																		0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
+
+		retDebug("map linked copy", ret);
+			
+
+		map_segment_role = clEnqueueMapBuffer(command_queue, memobj_segment_role, CL_TRUE, CL_MAP_WRITE,
+																		0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
+
+		retDebug("map segment role", ret);
+
+
+		mergeSortInt(segment_role, linked_copy, 0, tnumber - 1);
+
+
+		clEnqueueUnmapMemObject(command_queue, memobj_linked_copy, map_linked_copy, 0, NULL, NULL);
+		clEnqueueUnmapMemObject(command_queue, memobj_segment_role, map_segment_role, 0, NULL, NULL);
+		cl_mem memobj_ordering = memobj_segment_role;
+		clFinish(command_queue);
+
+	/*** DEBUG ***/
+	#ifdef DEBUG
+
+		map_is_seed = clEnqueueMapBuffer(command_queue, memobj_is_seed, CL_TRUE, CL_MAP_READ, 
+																		0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
+		retDebug("map is seed", ret);
+
+		map_parent = clEnqueueMapBuffer(command_queue, memobj_parent, CL_TRUE, CL_MAP_READ,
+																		0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
+		retDebug("map parent", ret);
+
+		map_max = clEnqueueMapBuffer(command_queue, memobj_max, CL_TRUE, CL_MAP_READ,
+																		0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
+		retDebug("map max", ret);
+
+		map_area = clEnqueueMapBuffer(command_queue, memobj_area, CL_TRUE, CL_MAP_READ,
+																		0, sizeof(double) * tnumber, 0, NULL, NULL,  &ret);
+		retDebug("map area", ret);
+
+
+		clEnqueueUnmapMemObject(command_queue, memobj_parent, map_parent, 0, NULL, NULL);
+
+		clEnqueueUnmapMemObject(command_queue, memobj_max, map_max, 0, NULL, NULL);
+
+		clEnqueueUnmapMemObject(command_queue, memobj_area, map_area, 0, NULL, NULL);
+
+		clFinish(command_queue);
+	 	unsigned long e;
+
+		int adj_mat[tnumber][tnumber];
+		int k;
+		int j;
+		for(k = 0; k < tnumber; k++){
+			for(j = 0; j < tnumber; j++)
+			{
+				adj_mat[k][j] = 0;
+			}
+		}
+		for(e = 0; e < tnumber;  e++){
+			if(parent[e] > -1)
+				adj_mat[e][parent[e]] = 1;
+			if(parent[e] > -1)
+				adj_mat[e][parent[e]] = 1;
+			if(parent[e] > -1)
+				adj_mat[e][parent[e]] = 1;
+		}
+		FILE* f = fopen("adjacency.txt", "w");
+		for(k = 0; k < tnumber; k++){
+			for(j = 0; j < tnumber; j++)
+			{	
+				if(j == tnumber - 1)
+					fprintf(f,"%i\n", adj_mat[k][j]);
+				else
+					fprintf(f,"%i,", adj_mat[k][j]);
+			}
+		}
+		fclose(f);
+
+		map_segment_role = clEnqueueMapBuffer(command_queue, memobj_segment_role, CL_TRUE, CL_MAP_READ,
+																		0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
+		retDebug("ordering", ret);
+
+
+		retDebug("Read for debugging", ret);
+
+		printf("%s\n", "ordering");
+		for(e = 0; e < tnumber; e++){
+			if(e % (localSize[0]) == 0)
+				printf("| ");
+			printf("%i ", segment_role[e]);
+
+		}
+		printf("\n");
+
+		printf("%s\n", "parents of ordered");
+		for(e = 0; e < tnumber; e++){
+			if(e % (localSize[0]) == 0)
+				printf("| ");
+			printf("%i ", parent[segment_role[e]]);
+
+		}
+		printf("\n");
+		clEnqueueUnmapMemObject(command_queue, memobj_segment_role, map_segment_role, 0, NULL, NULL);
+		clFinish(command_queue);
+		exit(0);
+	#endif
+	/*** DEBUG ***/
 
 	ret = clSetKernelArg(init_linked_kernel, 0, sizeof(cl_mem), (void *)&memobj_linked);
-	ret = clSetKernelArg(init_linked_kernel, 1, sizeof(cl_mem), (void *)&memobj_linked_copy);
+	ret = clSetKernelArg(init_linked_kernel, 1, sizeof(cl_mem), (void *)&memobj_ordering);
 	ret = clSetKernelArg(init_linked_kernel, 2, sizeof(int), &tnumber);
 
 
-	ret = clSetKernelArg(init_linked_copy_kernel, 0, sizeof(cl_mem), (void *)&memobj_linked);
-	ret = clSetKernelArg(init_linked_copy_kernel, 1, sizeof(cl_mem), (void *)&memobj_linked_copy);
-	ret = clSetKernelArg(init_linked_copy_kernel, 2, sizeof(int), &tnumber);
+	ret = clSetKernelArg(copy_array_kernel, 0, sizeof(cl_mem), (void *)&memobj_linked);
+	ret = clSetKernelArg(copy_array_kernel, 1, sizeof(cl_mem), (void *)&memobj_linked_copy);
+	ret = clSetKernelArg(copy_array_kernel, 2, sizeof(int), &tnumber);
 
 
 	ret = clSetKernelArg(mark_end_nodes_kernel, 0, sizeof(cl_mem), (void *)&memobj_linked);
@@ -572,115 +754,29 @@ int void_par(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 1, sizeof(int) * localSize[0], NULL);
 	ret = clSetKernelArg(count_class_kernel, 4, sizeof(int), &tnumber);
 
-
 	clFinish(command_queue);
-
-
-	/* Encolar kerneles en cola de comandos. */
-	ret = clEnqueueNDRangeKernel(command_queue, init_values_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
-	
-	ret = clEnqueueNDRangeKernel(command_queue, mark_max_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	
-	ret = clEnqueueNDRangeKernel(command_queue, create_tree_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-		
-	int step_count;
-	/* Calcular el numero de pasos para llegar a la raiz */
-	int jumping_max_steps = ceil(log(tnumber)/log(2.));
-	for(step_count = 0; step_count < jumping_max_steps; step_count++){
-		ret = clEnqueueNDRangeKernel(command_queue, find_succesor_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-
-		ret = clEnqueueNDRangeKernel(command_queue, set_succesor_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	}
-
-	ret = clEnqueueNDRangeKernel(command_queue, init_parent_copy_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
-	
-	
-	
-	clFinish(command_queue);
-
-
-	/*** DEBUG ***/
-	#ifdef DEBUG
-
-	map_is_seed = clEnqueueMapBuffer(command_queue, memobj_is_seed, CL_TRUE, CL_MAP_READ, 
-																	0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
-	
-	retDebug("Reade is_seed", ret);
-	
-
-	map_parent = clEnqueueMapBuffer(command_queue, memobj_parent, CL_TRUE, CL_MAP_READ,
-																	0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
-
-	map_max = clEnqueueMapBuffer(command_queue, memobj_max, CL_TRUE, CL_MAP_READ,
-																	0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
-
-	map_area = clEnqueueMapBuffer(command_queue, memobj_area, CL_TRUE, CL_MAP_READ,
-																	0, sizeof(double) * tnumber, 0, NULL, NULL,  &ret);
-
-
-	clEnqueueUnmapMemObject(command_queue, memobj_parent, map_parent, 0, NULL, NULL);
-	clEnqueueUnmapMemObject(command_queue, memobj_max, map_max, 0, NULL, NULL);
-	clEnqueueUnmapMemObject(command_queue, memobj_area, map_area, 0, NULL, NULL);
-	clFinish(command_queue);
-
-
- 	unsigned long e;
-	int adj_mat[tnumber][tnumber];
-	int k;
-	int j;
-	for(k = 0; k < tnumber; k++){
-		for(j = 0; j < tnumber; j++)
-		{
-			adj_mat[k][j] = 0;
-		}
-	}
-	for(e = 0; e < tnumber;  e++){
-		if(parent[e] > -1)
-			adj_mat[e][parent[e]] = 1;
-		if(parent[e] > -1)
-			adj_mat[e][parent[e]] = 1;
-		if(parent[e] > -1)
-			adj_mat[e][parent[e]] = 1;
-	}
-	FILE* f = fopen("adjacency.txt", "w");
-	for(k = 0; k < tnumber; k++){
-		for(j = 0; j < tnumber; j++)
-		{	
-			if(j == tnumber - 1)
-				fprintf(f,"%i\n", adj_mat[k][j]);
-			else
-				fprintf(f,"%i,", adj_mat[k][j]);
-		}
-	}
-	fclose(f);
-	#endif
-	/*** DEBUG ***/
-
-	/* Ordenar */
-	map_linked_copy = clEnqueueMapBuffer(command_queue, memobj_linked_copy, CL_TRUE, CL_MAP_WRITE,
-																	0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
-
-	map_parent_copy = clEnqueueMapBuffer(command_queue, memobj_parent_copy, CL_TRUE, CL_MAP_READ,
-																	0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
-
-
-	mergeSortInt(linked_copy, parent_copy, 0, tnumber - 1);
-	clEnqueueUnmapMemObject(command_queue, memobj_linked_copy, map_linked_copy, 0, NULL, NULL);
-	clEnqueueUnmapMemObject(command_queue, memobj_parent_copy, map_parent_copy, 0, NULL, NULL);
-	clFinish(command_queue);
-
 
 	ret = clEnqueueNDRangeKernel(command_queue, init_linked_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
+	retDebug("init_linked_kernel", ret);
+	
 
 
-	ret = clEnqueueNDRangeKernel(command_queue, init_linked_copy_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	ret = clEnqueueNDRangeKernel(command_queue, copy_array_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("copy_array_kernel", ret);
+
+	ret = clSetKernelArg(initialize_to_zero_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
+	ret = clSetKernelArg(initialize_to_zero_kernel, 1, sizeof(int), &tnumber);
+
+	ret = clEnqueueNDRangeKernel(command_queue, initialize_to_zero_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	retDebug("initialize_to_zero_kernel for segment", ret);
 	
 
 	ret = clEnqueueNDRangeKernel(command_queue, mark_end_nodes_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("mark_end_nodes_kernel", ret);
 	
 
 	for(step_count = 0; step_count < jumping_max_steps; step_count++){
@@ -689,9 +785,16 @@ int void_par(int argc, char **argv)
 	}
 	ret = clEnqueueNDRangeKernel(command_queue, communicate_data_to_root_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
+	retDebug("communicate_data_to_root_kernel", ret);
+	
 
 	ret = clEnqueueNDRangeKernel(command_queue, communicate_types_areas_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
+	retDebug("communicate_types_areas_kernel", ret);
+	
+	clFinish(command_queue);
+
+
 
 	cl_int class_to_count;
 
@@ -703,9 +806,13 @@ int void_par(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_nonzone_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
+	retDebug("count_class_kernel", ret);
+	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_nonzones_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("count_class_kernel", ret);
 	
 	class_to_count = INNER_VOID;
 	ret = clSetKernelArg(count_class_kernel, 3, sizeof(cl_int), &class_to_count);
@@ -714,9 +821,13 @@ int void_par(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_ivoid_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
+	retDebug("count_class_kernel", ret);
+	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_ivoids_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("count_class_kernel", ret);
 	
 	class_to_count = BORDER_VOID;
 	ret = clSetKernelArg(count_class_kernel, 3, sizeof(cl_int), &class_to_count);
@@ -725,9 +836,13 @@ int void_par(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_bvoid_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
+	retDebug("count_class_kernel", ret);
+	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_bvoids_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("count_class_kernel", ret);
 	
 	class_to_count = WALL;
 	ret = clSetKernelArg(count_class_kernel, 3, sizeof(cl_int), &class_to_count);
@@ -736,9 +851,13 @@ int void_par(int argc, char **argv)
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_wall_triangs_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
 	
+	retDebug("count_class_kernel", ret);
+	
 	ret = clSetKernelArg(count_class_kernel, 0, sizeof(cl_mem), (void *)&memobj_segment_role);
 	ret = clSetKernelArg(count_class_kernel, 2, sizeof(cl_mem), (void *)&memobj_num_walls_prods_wg);
 	ret = clEnqueueNDRangeKernel(command_queue, count_class_kernel, 1, NULL, global_work_size, localSize, 0, NULL, NULL);
+	
+	retDebug("count_class_kernel", ret);
 	
 
 
@@ -746,37 +865,43 @@ int void_par(int argc, char **argv)
 
 	/*** DEBUG ***/
 	#ifdef DEBUG
-	map_linked = clEnqueueMapBuffer(command_queue, memobj_linked, CL_TRUE, CL_MAP_READ,
-																	0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
+		map_linked = clEnqueueMapBuffer(command_queue, memobj_linked, CL_TRUE, CL_MAP_READ,
+																		0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
 
-	map_segment_role = clEnqueueMapBuffer(command_queue, memobj_segment_role, CL_TRUE, CL_MAP_READ,
-																	0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
+		map_segment_role = clEnqueueMapBuffer(command_queue, memobj_segment_role, CL_TRUE, CL_MAP_READ,
+																		0, sizeof(int) * tnumber, 0, NULL, NULL,  &ret);
 
-	map_is_seed = clEnqueueMapBuffer(command_queue, memobj_type, CL_TRUE, CL_MAP_READ, 
-																	0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
+		map_is_seed = clEnqueueMapBuffer(command_queue, memobj_type, CL_TRUE, CL_MAP_READ, 
+																		0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
 
-	map_touches_border = clEnqueueMapBuffer(command_queue, memobj_touches_border, CL_TRUE, CL_MAP_READ, 
-																	0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
+		map_touches_border = clEnqueueMapBuffer(command_queue, memobj_touches_border, CL_TRUE, CL_MAP_READ, 
+																		0, sizeof(int) * tnumber, 0, NULL, NULL, &ret);
 
-	clEnqueueUnmapMemObject(command_queue, memobj_linked, map_linked, 0, NULL, NULL);
-	clEnqueueUnmapMemObject(command_queue, memobj_segment_role, map_segment_role, 0, NULL, NULL);
-	clEnqueueUnmapMemObject(command_queue, memobj_is_seed, map_is_seed, 0, NULL, NULL);
-	clEnqueueUnmapMemObject(command_queue, memobj_touches_border, map_touches_border, 0, NULL, NULL);
-	clFinish(command_queue);
+		clEnqueueUnmapMemObject(command_queue, memobj_linked, map_linked, 0, NULL, NULL);
+		clEnqueueUnmapMemObject(command_queue, memobj_segment_role, map_segment_role, 0, NULL, NULL);
+		clEnqueueUnmapMemObject(command_queue, memobj_is_seed, map_is_seed, 0, NULL, NULL);
+		clEnqueueUnmapMemObject(command_queue, memobj_touches_border, map_touches_border, 0, NULL, NULL);
+		clFinish(command_queue);
 
-	e = 0;
-	while(TRUE){
-		if(e == NO_ADJ)
-			break;
-		printf("%li (root %i, is seed = %i), type = %i, border = %i, area = %f\n", e, parent[e], is_seed[e],type[e], touches_border[e],area[e]);
-		e = linked[e];
-	}
+		printf("%s\n", "linked");
+		for(e = 0; e < tnumber; e++){
+			printf("%i ", linked[e]);
+		}
+		printf("\n");
 
-	for(e = 0; e < tnumber;  e++){
-		printf("%i ", type[e]);
-	}
-	printf("\n");
-	printf("\n");
+		e = 0;
+		while(TRUE){
+			if(e == NO_ADJ)
+				break;
+			printf("%li (root %i, is seed = %i), type = %i, border = %i, area = %f\n", e, parent[e], is_seed[e],type[e], touches_border[e],area[e]);
+			e = linked[e];
+		}
+
+		for(e = 0; e < tnumber;  e++){
+			printf("%i ", type[e]);
+		}
+		printf("\n");
+		printf("\n");
 	#endif
 	/*** DEBUG ***/
 
@@ -863,53 +988,21 @@ int void_par(int argc, char **argv)
 		num_nonzone_triangs += num_nonzone_triangs_prods_wg[i];
 	}
 
+	
 
 	int time = 0;
 	gettimeofday(&tend, NULL);
 	time += ((tend.tv_sec - tstart.tv_sec) * 1000000) + (tend.tv_usec - tstart.tv_usec);
-
-	/*
 	printf("* Número de vacíos internos: %d (%d triángulos)\n", num_ivoids, num_ivoid_triangs);
 	printf("* Número de vacíos de borde: %d (%d triángulos)\n", num_bvoids, num_bvoid_triangs);
 	printf("* Número de murallas: %d (%d triángulos)\n", num_walls, num_wall_triangs);
 	printf("* Número de no-zonas: %d (%d triángulos)\n", num_nonzones, num_nonzone_triangs);
-	write_classification(cpath_prefix, jumping_next, type, area, tnumber, num_nonzone_triangs,
-												num_ivoid_triangs, num_bvoid_triangs, num_wall_triangs);
-	*/
-
+	
+	print_timestamp("Escribiendo datos...\n", t);
+	/*write_classification(cpath_prefix, jumping_next, type, area, tnumber, num_nonzone_triangs,
+												num_ivoid_triangs, num_bvoid_triangs, num_wall_triangs);*/
+	
 	/* Liberar memoria. */
-	free(jumping_next);
-	free(type);
-	free(area);
-	free(r);
-	free(p);
-	free(adj);
-	free(max);
-	free(is_seed);
-	free(segment_role);
-
-
-	free(segment_role_next);
-
-	free(touches_border);
-	free(touches_border_next);
-
-	free(parent);
-	free(parent_copy);
-
-	free(linked);
-	free(linked_copy);
-
-	free(area_next);
-
-	free(num_nonzones_prods_wg);
-	free(num_ivoids_prods_wg);
-	free(num_bvoids_prods_wg);
-	free(num_walls_prods_wg);
-	free(num_nonzone_triangs_prods_wg);
-	free(num_ivoid_triangs_prods_wg);
-	free(num_bvoid_triangs_prods_wg);
-	free(num_wall_triangs_prods_wg);
 
 	clReleaseMemObject(memobj_r);
 	clReleaseMemObject(memobj_p);
@@ -925,7 +1018,6 @@ int void_par(int argc, char **argv)
 	clReleaseMemObject(memobj_touches_border_next);
 	clReleaseMemObject(memobj_type);
 	clReleaseMemObject(memobj_parent);
-	clReleaseMemObject(memobj_parent_copy);
 	clReleaseMemObject(memobj_linked);
 	clReleaseMemObject(memobj_linked_copy);
 	clReleaseMemObject(memobj_num_nonzones_prods_wg);
@@ -936,8 +1028,37 @@ int void_par(int argc, char **argv)
 	clReleaseMemObject(memobj_num_ivoid_triangs_prods_wg);
 	clReleaseMemObject(memobj_num_bvoid_triangs_prods_wg);
 	clReleaseMemObject(memobj_num_wall_triangs_prods_wg);
+	clReleaseContext(context);
+	clReleaseCommandQueue(command_queue);
+	
+	free(r);
+	free(p);
+	free(adj);
+	free(area);
+	free(max);
+	free(is_seed);
+	free(jumping_next);
+	free(type);
+	free(segment_role);
+	free(segment_role_next);
+	free(touches_border);
+	free(touches_border_next);
+	free(parent);
+	free(linked);
+	free(linked_copy);
+	free(area_next);
+	free(num_nonzones_prods_wg);
+	free(num_ivoids_prods_wg);
+	free(num_bvoids_prods_wg);
+	free(num_walls_prods_wg);
+	free(num_nonzone_triangs_prods_wg);
+	free(num_ivoid_triangs_prods_wg);
+	free(num_bvoid_triangs_prods_wg);
+	free(num_wall_triangs_prods_wg);
 
 
-
+	
+	print_timestamp("Fin.\n", t);
+	
 	return time;
 }

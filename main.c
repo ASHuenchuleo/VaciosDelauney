@@ -26,7 +26,6 @@ void test(int ntests, int npoints, double area_min, char* filename){
 	double time_sec = 0;
 	double time_par = 0;
 	double time_mix = 0;
-	double time = 0;
 
 	printf("Secuencial\n");
 	time_sec = test_dataset(ntests, filename, area_min, void_sec);
@@ -44,9 +43,6 @@ int main(int argc, char** argv){
 
 	char* filename;
 
-
-	/*
-
 	filename = "data/data.dat";
 	test(ntests, 100, 50000000000, filename);
 
@@ -60,42 +56,35 @@ int main(int argc, char** argv){
 	test(ntests, 50000, 500, filename);
 	
 	filename = "data/data_100000.dat";
-	test(ntests, 1000000, 100, filename);
+	test(ntests, 100000, 10, filename);
 
 	filename = "data/data_300000.dat";
-	test(ntests, 300000, 100, filename);
+	test(ntests, 300000, 0.5, filename);
 
 	filename = "data/data_600000.dat";
-	test(ntests, 300000, 100, filename);
+	test(ntests, 600000, 0.5, filename);
 	
 	filename = "data/data_1000000.dat";
-	test(ntests, 1000000, 100, filename);
+	test(ntests, 1000000, 0.5, filename);
 
 	filename = "data/data_3000000.dat";
-	test(ntests, 3000000, 100, filename);
+	test(ntests, 3000000, 0.5, filename);
 
-	filename = "data/data_6000000.dat";
-	test(ntests, 6000000, 100, filename);
+	/*filename = "data/data_6000000.dat";
+	test(ntests, 6000000, 0.5, filename);
 
 	filename = "data/data_10000000.dat";
-	test(ntests, 1000000, 100, filename);
+	test(ntests, 10000000, 0.5, filename);
 
 	filename = "data/data_20000000.dat";
-	test(ntests, 2000000, 100, filename);
+	test(ntests, 2000000, 0.5, filename);
 
 	filename = "data/data_40000000.dat";
-	test(ntests, 4000000, 100, filename);
+	test(ntests, 4000000, 0.5, filename);
 
 	filename = "data/data_60000000.dat";
-	test(ntests, 6000000, 100, filename);
-	*/
-	filename = "data/data_20000000.dat";
-	test(ntests, 2000000, 100, filename);
+	test(ntests, 6000000, 0.5, filename);
 
-	filename = "data/data_40000000.dat";
-	test(ntests, 4000000, 100, filename);
 
-	filename = "data/data_60000000.dat";
-	test(ntests, 6000000, 100, filename);
     return 0;
 } 

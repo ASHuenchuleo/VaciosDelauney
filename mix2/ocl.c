@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
-#define MAX_SOURCE_SIZE 8192
+#define MAX_SOURCE_SIZE 16384
 
 
 

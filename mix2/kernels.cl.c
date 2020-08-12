@@ -42,7 +42,8 @@ kernel void mark_max_max(global double *r, global int *p, global int *max,
 }
 
 
-void process_edge_graph(int i, int edge_index, global int *p, global int* adj, global int* max, global int* disconnect, global int *is_seed){
+void process_edge_graph(int i, int edge_index, global int *p, global int* adj,
+							global int* max, global int* disconnect, global int *is_seed){
 	int ii;
 	int ij;
 	int j;
@@ -66,8 +67,8 @@ void process_edge_graph(int i, int edge_index, global int *p, global int* adj, g
  * */
 
 kernel void mark_disconnections(global int *p, global int *adj, global int *max,
-																global int *disconnect, global int *is_seed,
-																int tnumber)
+									global int *disconnect, global int *is_seed,
+									int tnumber)
 {
 	int i;
 	
@@ -77,8 +78,6 @@ kernel void mark_disconnections(global int *p, global int *adj, global int *max,
 		process_edge_graph(i, 1, p, adj, max, disconnect, is_seed);
 		process_edge_graph(i, 2, p, adj, max, disconnect, is_seed);
 	}
-
-
 }
 
 
